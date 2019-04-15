@@ -8,6 +8,7 @@ cleanString = lambda x: '' if x is None else unidecode.unidecode(re.sub(r'\s+', 
 class imdb(scrapy.Spider):
     name = 'imdb'
     movies = set()
+    actors = set()
 
     def start_requests(self):
         allowed_domains = ['www.imdb.com']
@@ -16,11 +17,11 @@ class imdb(scrapy.Spider):
 
     def parse(self, response):
         movie_id = response.url.split("/")[-3]
-        res = self.movies.add(movie_id)
-        print(str(res))
-        if (self.movies.add(movie_id) == -1):
+        if movie_id in self.movies:
             return
-        actors = []
+        else:
+            self.movies.add(movie_id)
+
         parent = response.css("div.parent").css('h3')
         title = parent.css('a::text').get()
         title = cleanString(title).strip()
@@ -28,6 +29,7 @@ class imdb(scrapy.Spider):
         year = re.sub('[()]', '', year)
 
         cast_list = response.css('table.cast_list')
+        new_actors = set()
         for tr in cast_list.css('tr'):
             name = tr.css('td').css('a::text').get()
             name = cleanString(name).strip()
@@ -48,13 +50,18 @@ class imdb(scrapy.Spider):
                     "actor_id": actor_id,
                     "role_name": role
                 }
-                actors.append(actor_id)
 
-        for actor in actors:
+                if actor_id in self.actors:
+                    continue
+                else:
+                    self.actors.add(actor_id)
+                    new_actors.add(actor_id)
+
+        for actor in new_actors:
             yield response.follow('https://www.imdb.com/name/' + actor, self.parse_actor)
 
-    def parse_actor(self, response):
 
+    def parse_actor(self, response):
         entries = response.css('div.filmo-category-section').css('div')
         for movie in entries:
             try:
@@ -66,6 +73,6 @@ class imdb(scrapy.Spider):
             if 1980 <= year < 1990:
                 movie_id = movie.css('b').css('a[href]').get().split('/')[2]
                 type = movie.css('::text')
-                if not "TV" in str(type): # to remove TV Series and TV Movies from our dataset
+                if not "TV" in str(type):  # to remove TV Series and TV Movies from our dataset
                     if movie_id:
                         yield response.follow('http://www.imdb.com/title/' + movie_id + '/fullcredits/', self.parse)
