@@ -1,6 +1,19 @@
 import scrapy
 import unidecode
 import re
+import uuid
+from decouple import config
+from elasticsearch import Elasticsearch
+
+ELASTIC_API_URL_HOST = config('ELASTIC_API_URL_HOST')
+ELASTIC_API_URL_PORT = config('ELASTIC_API_URL_PORT')
+ELASTIC_API_USERNAME = config('ELASTIC_API_USERNAME')
+ELASTIC_API_PASSWORD = config('ELASTIC_API_PASSWORD')
+
+es=Elasticsearch(host=ELASTIC_API_URL_HOST,
+                 scheme='https',
+                 port=ELASTIC_API_URL_PORT,
+                 http_auth=(ELASTIC_API_USERNAME,ELASTIC_API_PASSWORD))
 
 cleanString = lambda x: '' if x is None else unidecode.unidecode(re.sub(r'\s+', ' ', x))
 
@@ -33,14 +46,19 @@ class imdb(scrapy.Spider):
         for tr in cast_list.css('tr'):
             name = tr.css('td').css('a::text').get()
             name = cleanString(name).strip()
-            if (name):
+            if name:
                 actor_id = tr.css('td').css('a[href]').get()
                 actor_id = actor_id.split('/')[2]
                 role = tr.css('td.character').css('a::text').get()
                 role = cleanString(role).strip()
-                if (not role):
+                if not role:
                     role = tr.css('td.character::text').get()
                     role = cleanString(role).strip()
+
+                try:
+                    birthyear = response.meta['birthYear']
+                except:
+                    birthyear = ''
 
                 yield {
                     "movie_id": movie_id,
@@ -48,8 +66,22 @@ class imdb(scrapy.Spider):
                     "movie_year": year,
                     "actor_name": name,
                     "actor_id": actor_id,
+                    "actor_year": birthyear,
                     "role_name": role
                 }
+
+                es.index(index='imdb',
+                         doc_type='movies',
+                         id=uuid.uuid4(),
+                         body={
+                             "movie_id": movie_id,
+                             "movie_name": title,
+                             "movie_year": year,
+                             "actor_name": name,
+                             "actor_id": actor_id,
+                             "actor_year": birthyear,
+                             "role_name": role
+                         })
 
                 if actor_id in self.actors:
                     continue
@@ -60,9 +92,10 @@ class imdb(scrapy.Spider):
         for actor in new_actors:
             yield response.follow('https://www.imdb.com/name/' + actor, self.parse_actor)
 
-
     def parse_actor(self, response):
         entries = response.css('div.filmo-category-section').css('div')
+        birthyear = str(response.css('time').xpath('@datetime').get()).split('-')[0]
+
         for movie in entries:
             try:
                 year = movie.css('span.year_column::text').get()
@@ -75,4 +108,4 @@ class imdb(scrapy.Spider):
                 type = movie.css('::text')
                 if not "TV" in str(type):  # to remove TV Series and TV Movies from our dataset
                     if movie_id:
-                        yield response.follow('http://www.imdb.com/title/' + movie_id + '/fullcredits/', self.parse)
+                        yield response.follow('http://www.imdb.com/title/' + movie_id + '/fullcredits/', self.parse, meta={'birthYear':birthyear})
